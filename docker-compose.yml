@@ -1,0 +1,111 @@
+# =============================================================================
+# AI CFO — Docker Compose (Development)
+# Runs: FastAPI, PostgreSQL, Redis, Celery Worker, Celery Beat
+# =============================================================================
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: aicfo-postgres
+    environment:
+      POSTGRES_DB: aicfo
+      POSTGRES_USER: aicfo
+      POSTGRES_PASSWORD: aicfo_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aicfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aicfo-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      target: development
+    container_name: aicfo-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - APP_ENV=development
+      - APP_DEBUG=true
+      - DATABASE_URL=postgresql+asyncpg://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - DATABASE_URL_SYNC=postgresql://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - JWT_SECRET_KEY=dev-jwt-secret-change-in-production-please
+      - ENCRYPTION_KEY=dev-encryption-key-32chars-long!!
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Worker ──────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: ./backend
+      target: development
+    container_name: aicfo-celery-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgresql+asyncpg://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - DATABASE_URL_SYNC=postgresql://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - ENCRYPTION_KEY=dev-encryption-key-32chars-long!!
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Beat (scheduler) ────────────────────────────────────────────
+  celery-beat:
+    build:
+      context: ./backend
+      target: development
+    container_name: aicfo-celery-beat
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgresql+asyncpg://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - DATABASE_URL_SYNC=postgresql://aicfo:aicfo_dev_password@postgres:5432/aicfo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - ENCRYPTION_KEY=dev-encryption-key-32chars-long!!
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
